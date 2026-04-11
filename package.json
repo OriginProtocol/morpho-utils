@@ -2,6 +2,13 @@
   "name": "origin-morpho-utils",
   "version": "0.1.0",
   "description": "Morpho Blue / MetaMorpho vault APY computation and deposit/withdrawal impact simulation",
+  "license": "BUSL-1.1",
+  "author": "Origin Protocol",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/OriginProtocol/morpho-utils.git"
+  },
+  "keywords": ["morpho", "defi", "apy", "metamorpho", "viem"],
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -45,7 +52,7 @@
     "prettier-check": "prettier --check 'src/**/*.ts' 'test/**/*.ts'",
     "prettier-fix": "prettier --write 'src/**/*.ts' 'test/**/*.ts'",
     "typecheck": "tsc --noEmit",
-    "publish": "pnpm build && npm publish"
+    "prepublishOnly": "pnpm build"
   },
   "peerDependencies": {
     "viem": ">=2.0.0"
