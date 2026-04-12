@@ -10,6 +10,31 @@ const TARGET_UTIL = 0.9
 const STEEPNESS = 4
 const WAD = 1e18
 const SECONDS_PER_YEAR = 365 * 24 * 3600 // 365-day year, no leap year — matches Morpho convention
+const PRECISION_WARNING_TOKEN_SPACING = 1e-6
+const PRECISION_WARNED_MARKETS = new Set<string>()
+
+function estimateTokenSpacing(rawAmount: bigint, decimals: number): number {
+  const abs = rawAmount < 0n ? -rawAmount : rawAmount
+  if (abs === 0n) return 0
+  const bitLength = abs.toString(2).length
+  if (bitLength <= 53) return 0
+  const spacingRaw = 2 ** (bitLength - 53)
+  return spacingRaw / Math.pow(10, decimals)
+}
+
+function warnIfPrecisionRisk(marketId: string, decimals: number, simSupply: bigint, simVaultSupply: bigint): void {
+  if (PRECISION_WARNED_MARKETS.has(marketId)) return
+  const supplySpacing = estimateTokenSpacing(simSupply, decimals)
+  const vaultSpacing = estimateTokenSpacing(simVaultSupply, decimals)
+  const spacing = Math.max(supplySpacing, vaultSpacing)
+  if (spacing < PRECISION_WARNING_TOKEN_SPACING) return
+
+  PRECISION_WARNED_MARKETS.add(marketId)
+  console.warn(
+    `[morpho-apy] Potential floating-point precision loss for market ${marketId}: ` +
+      `number spacing is ~${spacing.toExponential(2)} tokens at current magnitudes.`,
+  )
+}
 
 /** Normalized distance from target utilization. Range: [-1, +1]. */
 function _error(util: number): number {
@@ -99,6 +124,7 @@ export function weightedVaultApyDetailed(
     const wSim = withdrawalSim[m.marketId] ?? 0n
     simSupply = simSupply - wSim
     const simVaultSupply = m.vaultSupplyAssets - wSim
+    warnIfPrecisionRisk(m.marketId, m.decimals, simSupply, simVaultSupply)
 
     const supply = Number(simSupply) / scale
     const borrows = Number(m.totalBorrowAssets) / scale
@@ -228,8 +254,27 @@ export function simulateWithdrawal(
  * array of MarketImpactDetail with nested `current` and `simulated` snapshots.
  */
 export function mergeMarketDetails(current: MarketApyDetail[], simulated: MarketApyDetail[]): MarketImpactDetail[] {
-  return current.map((c, i) => {
-    const s = simulated[i]
+  const currentIds = new Set<string>()
+  for (const c of current) {
+    if (currentIds.has(c.marketId)) {
+      throw new Error(`[morpho-apy] Duplicate current marketId in mergeMarketDetails: ${c.marketId}`)
+    }
+    currentIds.add(c.marketId)
+  }
+
+  const simulatedById = new Map<string, MarketApyDetail>()
+  for (const s of simulated) {
+    if (simulatedById.has(s.marketId)) {
+      throw new Error(`[morpho-apy] Duplicate simulated marketId in mergeMarketDetails: ${s.marketId}`)
+    }
+    simulatedById.set(s.marketId, s)
+  }
+
+  return current.map((c) => {
+    const s = simulatedById.get(c.marketId)
+    if (!s) {
+      throw new Error(`[morpho-apy] Missing simulated marketId in mergeMarketDetails: ${c.marketId}`)
+    }
     return {
       marketId: c.marketId,
       name: c.name,

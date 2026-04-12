@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   estimateMarketApy,
+  mergeMarketDetails,
   simulateDeposit,
   simulateWithdrawal,
   weightedVaultApy,
@@ -356,5 +357,42 @@ describe('weightedVaultApyDetailed', () => {
     const withdrawn = 100n * 10n ** 18n
     const detailed = weightedVaultApyDetailed([market], {}, { '0xaaa': withdrawn })
     expect(detailed.markets[0].vaultSupplyAssets).toBe(400n * 10n ** 18n)
+  })
+})
+
+describe('mergeMarketDetails', () => {
+  it('merges by marketId even when simulated order differs', () => {
+    const current = weightedVaultApyDetailed([
+      makeMarket({ marketId: '0xa' }),
+      makeMarket({ marketId: '0xb', totalBorrowAssets: 700n * 10n ** 18n }),
+    ]).markets
+    const simulated = weightedVaultApyDetailed([
+      makeMarket({ marketId: '0xa', totalSupplyAssets: 1100n * 10n ** 18n }),
+      makeMarket({ marketId: '0xb', totalSupplyAssets: 1200n * 10n ** 18n }),
+    ]).markets
+
+    const reordered = [simulated[1], simulated[0]]
+    const merged = mergeMarketDetails(current, reordered)
+
+    expect(merged).toHaveLength(2)
+    expect(merged[0].marketId).toBe('0xa')
+    expect(merged[0].simulated.vaultSupplyAssets).toBe(simulated[0].vaultSupplyAssets)
+    expect(merged[1].marketId).toBe('0xb')
+    expect(merged[1].simulated.vaultSupplyAssets).toBe(simulated[1].vaultSupplyAssets)
+  })
+
+  it('throws on duplicate simulated market IDs', () => {
+    const current = weightedVaultApyDetailed([makeMarket({ marketId: '0xa' })]).markets
+    const simulated = weightedVaultApyDetailed([makeMarket({ marketId: '0xa' })]).markets
+    const duplicated = [simulated[0], simulated[0]]
+
+    expect(() => mergeMarketDetails(current, duplicated)).toThrow(/Duplicate simulated marketId/)
+  })
+
+  it('throws when a current market is missing from simulated details', () => {
+    const current = weightedVaultApyDetailed([makeMarket({ marketId: '0xa' }), makeMarket({ marketId: '0xb' })]).markets
+    const simulated = weightedVaultApyDetailed([makeMarket({ marketId: '0xa' })]).markets
+
+    expect(() => mergeMarketDetails(current, simulated)).toThrow(/Missing simulated marketId/)
   })
 })

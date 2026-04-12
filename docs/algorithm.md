@@ -11,6 +11,23 @@ This document describes the math behind vault APY computation, deposit impact si
 | WAD | 1e18 | Fixed-point scaling factor (18 decimals) |
 | SECONDS_PER_YEAR | 31,536,000 | 365 * 24 * 3600 (no leap year, matches Morpho convention) |
 
+## 1.1 Numerical Precision
+
+APY computation uses JavaScript `number` values after converting on-chain `bigint` balances by token decimals.
+
+- First precision loss starts when raw base units exceed `2^53`.
+- For 18-decimal tokens, this is `0.009007199254740993` tokens.
+- For 6-decimal tokens, this is `9,007,199,254.740992` tokens.
+
+In practice, rounding is usually tiny at first. For 18-decimal assets, approximate token magnitudes where floating spacing reaches:
+
+- `1e-12` tokens at ~`4.72e3` tokens
+- `1e-9` tokens at ~`4.84e6` tokens
+- `1e-6` tokens at ~`4.95e9` tokens
+- `1e-3` tokens at ~`5.07e12` tokens
+
+The implementation emits a one-time warning per market when estimated spacing reaches `1e-6` tokens or higher.
+
 ## 2. Single Market APY
 
 ### 2.1 Utilization
@@ -142,7 +159,8 @@ The increased supply lowers utilization, which typically lowers both borrow and 
 
 ```
 newAPY = weightedVaultApy(markets, depositSim={})
-impactBps = round((currentAPY - newAPY) * 10000)
+impact = newAPY - currentAPY
+impactBps = round(impact * 10000)
 ```
 
 ## 5. Withdrawal Simulation
@@ -396,8 +414,9 @@ function computeDepositImpact(markets, idleAssets, depositAmount):
     currentApy = weightedVaultApy(markets)
     sim = simulateDeposit(markets, depositAmount)
     newApy = weightedVaultApy(markets, depositSim=sim)
-    impactBps = round((currentApy - newApy) * 10000)
-    return { currentApy, newApy, impactBps }
+    impact = newApy - currentApy
+    impactBps = round(impact * 10000)
+    return { currentApy, newApy, impact, impactBps }
 ```
 
 ### 7.6 computeWithdrawalImpact
@@ -414,7 +433,8 @@ function computeWithdrawalImpact(markets, idleAssets, withdrawAmount):
     else:
         newApy = weightedVaultApy(markets, withdrawalSim=sim)
 
-    impactBps = round((currentApy - newApy) * 10000)
+    impact = newApy - currentApy
+    impactBps = round(impact * 10000)
     isPartial = remaining > 0
-    return { currentApy, newApy, impactBps, isPartial, withdrawableAmount: withdrawable }
+    return { currentApy, newApy, impact, impactBps, isPartial, withdrawableAmount: withdrawable }
 ```

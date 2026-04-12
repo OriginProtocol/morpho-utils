@@ -378,6 +378,22 @@ describe('findMaxWithdrawalAmount', async () => {
     expect(result.impact.newApy).toBe(0)
   })
 
+  it('full drain still returns includeMarkets details', async () => {
+    const market = makeMarket({
+      totalSupplyAssets: 500n * TOKEN,
+      totalBorrowAssets: 0n,
+      vaultSupplyAssets: 500n * TOKEN,
+      withdrawQueueIndex: 0,
+    })
+    const idle = 100n * TOKEN
+    const result = await findMaxWithdrawalAmount([market], idle, 600n * TOKEN, 10000, { includeMarkets: true })
+
+    expect(result.amount).toBe(600n * TOKEN)
+    expect(result.impact.newApy).toBe(0)
+    expect(result.impact.markets).toHaveLength(1)
+    expect(result.impact.markets[0].simulated.vaultSupplyAssets).toBe(0n)
+  })
+
   it('returns 0 when market is 100% utilized and no idle', async () => {
     const market = makeMarket({
       totalSupplyAssets: 1000n * TOKEN,

@@ -210,6 +210,40 @@ When `includeMarkets: true`, impact results include a `markets` array of `Market
 
 For `fetchVaultApy`, the `marketDetails` array contains `MarketApyDetail` (same fields as above, without the `current`/`simulated` nesting).
 
+## Impact Sign Convention
+
+Impact values are signed as:
+
+```typescript
+impact = newApy - currentApy
+impactBps = round(impact * 10000)
+```
+
+- negative impact means APY decreased
+- positive impact means APY increased
+
+## Numerical Precision Notes
+
+This library converts on-chain `bigint` balances to JavaScript `number` for APY math.
+
+Because IEEE-754 doubles have 53 bits of integer precision, precision loss starts when raw base units exceed `2^53`:
+
+- 18 decimals: `2^53 / 1e18 = 0.009007199254740993` tokens
+- 6 decimals: `2^53 / 1e6 = 9,007,199,254.740992` tokens
+
+This does not automatically imply large APY error; it usually starts as tiny base-unit rounding.
+
+Approximate 18-decimal token magnitudes where floating spacing reaches:
+
+- `1e-12` tokens at ~`4.72e3` tokens
+- `1e-9` tokens at ~`4.84e6` tokens
+- `1e-6` tokens at ~`4.95e9` tokens
+- `1e-3` tokens at ~`5.07e12` tokens
+- `0.1` tokens at ~`6.49e14` tokens
+- `1` token at ~`5.19e15` tokens
+
+At runtime, the math layer emits a one-time warning per market when estimated token spacing reaches `1e-6` tokens or higher.
+
 ## Custom Constraints
 
 The `findMaxDeposit*` and `findMaxWithdrawal*` functions accept an optional `constraint` callback that adds custom criteria beyond APY impact. The binary search finds the largest amount satisfying **both** the APY impact threshold and the custom constraint.

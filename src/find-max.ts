@@ -8,7 +8,6 @@ import type {
   FindMaxConstraint,
   FindMaxDepositResult,
   FindMaxWithdrawalResult,
-  MarketApyDetail,
   MarketForApy,
   VaultApyDetailed,
   WithdrawalImpactResult,
@@ -67,6 +66,21 @@ function buildWithdrawalImpact(
     isPartial: remaining > 0n,
     withdrawableAmount: withdrawable.toString(),
     markets: includeMarkets ? mergeMarketDetails(current.markets, simulated.markets) : [],
+  }
+}
+
+function makeFullDrainSnapshot(current: VaultApyDetailed): VaultApyDetailed {
+  return {
+    apy: 0,
+    markets: current.markets.map((m) => ({
+      marketId: m.marketId,
+      name: m.name,
+      supplyApy: 0,
+      borrowApy: 0,
+      utilization: 0,
+      allocationPct: 0,
+      vaultSupplyAssets: 0n,
+    })),
   }
 }
 
@@ -258,9 +272,7 @@ export async function findMaxWithdrawalAmount(
   async function isAcceptable(amount: bigint): Promise<boolean> {
     const { sim, withdrawable, remaining } = simulateWithdrawal(markets, amount, idleAssets)
     const isFullDrain = withdrawable >= totalVaultAssets
-    const simulated = isFullDrain
-      ? { apy: 0, markets: [] as MarketApyDetail[] }
-      : weightedVaultApyDetailed(markets, {}, sim)
+    const simulated = isFullDrain ? makeFullDrainSnapshot(current) : weightedVaultApyDetailed(markets, {}, sim)
     const impact = Math.abs(simulated.apy - current.apy)
     if (impact > maxImpact) return false
     if (!constraint) return true
@@ -294,9 +306,7 @@ export async function findMaxWithdrawalAmount(
   if (await isAcceptable(effectiveMax)) {
     const { sim, withdrawable, remaining } = simulateWithdrawal(markets, effectiveMax, idleAssets)
     const simulated =
-      withdrawable >= totalVaultAssets
-        ? { apy: 0, markets: [] as MarketApyDetail[] }
-        : weightedVaultApyDetailed(markets, {}, sim)
+      withdrawable >= totalVaultAssets ? makeFullDrainSnapshot(current) : weightedVaultApyDetailed(markets, {}, sim)
     return {
       amount: effectiveMax,
       maxPossibleAmount: maxPossible,
@@ -335,9 +345,7 @@ export async function findMaxWithdrawalAmount(
 
   const { sim, withdrawable, remaining } = simulateWithdrawal(markets, lo, idleAssets)
   const simulated =
-    withdrawable >= totalVaultAssets
-      ? { apy: 0, markets: [] as MarketApyDetail[] }
-      : weightedVaultApyDetailed(markets, {}, sim)
+    withdrawable >= totalVaultAssets ? makeFullDrainSnapshot(current) : weightedVaultApyDetailed(markets, {}, sim)
   return {
     amount: lo,
     maxPossibleAmount: maxPossible,
