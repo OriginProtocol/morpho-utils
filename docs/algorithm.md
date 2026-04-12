@@ -426,15 +426,52 @@ function computeWithdrawalImpact(markets, idleAssets, withdrawAmount):
     currentApy = weightedVaultApy(markets)
     { sim, withdrawable, remaining } = simulateWithdrawal(markets, withdrawAmount, idleAssets)
 
-    totalVaultAssets = sum(m.vaultSupplyAssets for m in markets) + idleAssets
-
-    if withdrawable >= totalVaultAssets:
-        newApy = 0
-    else:
-        newApy = weightedVaultApy(markets, withdrawalSim=sim)
+    newApy = weightedVaultApy(markets, withdrawalSim=sim)
+    // Full drain: all vault weights become 0 → weightedVaultApy returns 0 naturally
 
     impact = newApy - currentApy
     impactBps = round(impact * 10000)
     isPartial = remaining > 0
     return { currentApy, newApy, impact, impactBps, isPartial, withdrawableAmount: withdrawable }
 ```
+
+## 8. Interest Accrual
+
+Morpho Blue accrues interest lazily — `totalSupplyAssets` and `totalBorrowAssets` are only updated on-chain when someone interacts with the market. The `market()` view function returns stored (potentially stale) state.
+
+When fetching market data, the library computes accrued interest locally to correct for staleness:
+
+```pseudocode
+function accrueMarketInterest(market, now):
+    elapsed = now - market.lastUpdate
+    if elapsed <= 0 or market.totalBorrowAssets == 0:
+        return unchanged
+
+    borrowRate = computeBorrowRate(market.rateAtTarget, market.totalSupplyAssets, market.totalBorrowAssets)
+    interest = market.totalBorrowAssets * taylorCompounded(borrowRate, elapsed) / WAD
+    feeAmount = interest * market.fee / WAD
+
+    market.totalBorrowAssets += interest
+    market.totalSupplyAssets += interest
+    market.totalSupplyShares += feeAmount * market.totalSupplyShares / (market.totalSupplyAssets - feeAmount)
+```
+
+Where `taylorCompounded(rate, n)` is a 3rd-order Taylor approximation of `exp(rate * n) - 1`, matching the on-chain implementation.
+
+## 9. Limitations
+
+### 9.1 Point-in-Time rateAtTarget
+
+The Morpho Blue IRM is adaptive: `rateAtTarget` drifts over time based on utilization history. When utilization is above the 90% target, `rateAtTarget` increases; when below, it decreases. The adjustment speed is approximately 50x/year.
+
+All simulations in this library use the **current** `rateAtTarget` value. A large deposit that pushes utilization well below target would, over time, cause `rateAtTarget` to decrease further, compounding the APY reduction beyond the point-in-time estimate. Conversely, a large withdrawal pushing utilization above target would cause `rateAtTarget` to increase.
+
+For small deposits/withdrawals relative to market size, this drift is negligible. For large position changes, the true long-term impact will differ from the instantaneous estimate.
+
+### 9.2 Floating-Point Precision
+
+See section 1.1 for details on numerical precision. The library uses JavaScript `number` (IEEE-754 double) for APY math after converting on-chain `bigint` values. This is sufficient for all practical vault sizes but loses precision for raw balances exceeding `2^53` base units.
+
+### 9.3 Continuous Compounding Approximation
+
+The library uses `exp(rate * time) - 1` for APY computation, while Morpho on-chain uses a 3rd-order Taylor approximation. Both approximate continuous compounding and differ by less than `10^-8` for realistic rates.

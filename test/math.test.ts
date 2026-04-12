@@ -123,9 +123,9 @@ describe('weightedVaultApy', () => {
     expect(combined).toBeLessThan(apyA)
   })
 
-  it('throws when all markets have zero vault supply', () => {
+  it('returns zero APY when all markets have zero vault supply', () => {
     const market = makeMarket({ vaultSupplyAssets: 0n })
-    expect(() => weightedVaultApy([market])).toThrow(/zero supply position/)
+    expect(weightedVaultApy([market])).toBe(0)
   })
 
   it('skips markets with zero vault supply', () => {

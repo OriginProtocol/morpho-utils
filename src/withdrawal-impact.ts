@@ -5,18 +5,6 @@ import { fetchVaultApyViem } from './fetch.js'
 import { mergeMarketDetails, simulateWithdrawal, weightedVaultApyDetailed } from './math.js'
 import type { WithdrawalImpactResult } from './types.js'
 
-function makeFullDrainMarketDetails(current: ReturnType<typeof weightedVaultApyDetailed>) {
-  return current.markets.map((m) => ({
-    marketId: m.marketId,
-    name: m.name,
-    supplyApy: 0,
-    borrowApy: 0,
-    utilization: 0,
-    allocationPct: 0,
-    vaultSupplyAssets: 0n,
-  }))
-}
-
 /**
  * Compute the APY impact of a withdrawal from a MetaMorpho vault.
  * Makes live on-chain RPC calls via the provided viem PublicClient.
@@ -54,12 +42,7 @@ export async function computeWithdrawalImpact(
   const current = weightedVaultApyDetailed(markets)
   const { sim, withdrawable, remaining } = simulateWithdrawal(markets, withdrawAmount, idleAssets)
 
-  // Edge case: full withdrawal drains all vault positions
-  const totalVaultAssets = markets.reduce((acc, m) => acc + m.vaultSupplyAssets, 0n) + idleAssets
-  const simulated =
-    withdrawable >= totalVaultAssets
-      ? { apy: 0, markets: makeFullDrainMarketDetails(current) }
-      : weightedVaultApyDetailed(markets, {}, sim)
+  const simulated = weightedVaultApyDetailed(markets, {}, sim)
   const impact = simulated.apy - current.apy
 
   return {

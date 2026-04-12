@@ -74,7 +74,7 @@ export function estimateMarketApy(
     return { supplyApy: 0, borrowApy: 0 }
   }
 
-  let util = Math.min(totalBorrows / supply, 0.9999) // clamp to avoid division by zero
+  let util = Math.min(totalBorrows / supply, 1.0)
   if (util < 0.0001) util = 0
 
   const ratePerSec = rateAtTarget / WAD
@@ -117,13 +117,14 @@ export function weightedVaultApyDetailed(
   for (const m of markets) {
     const scale = Math.pow(10, m.decimals)
 
-    // Apply deposit simulation: increase totalSupplyAssets for target markets
-    let simSupply = depositSim[m.marketId] ? m.totalSupplyAssets + depositSim[m.marketId] : m.totalSupplyAssets
+    // Apply deposit simulation: increase both totalSupplyAssets and vaultSupplyAssets
+    const dSim = depositSim[m.marketId] ?? 0n
+    let simSupply = m.totalSupplyAssets + dSim
 
     // Apply withdrawal simulation: decrease both totalSupplyAssets and vaultSupplyAssets
     const wSim = withdrawalSim[m.marketId] ?? 0n
     simSupply = simSupply - wSim
-    const simVaultSupply = m.vaultSupplyAssets - wSim
+    const simVaultSupply = m.vaultSupplyAssets + dSim - wSim
     warnIfPrecisionRisk(m.marketId, m.decimals, simSupply, simVaultSupply)
 
     const supply = Number(simSupply) / scale
@@ -153,10 +154,7 @@ export function weightedVaultApyDetailed(
   }
 
   if (totalWeight <= 0) {
-    throw new Error(
-      `[morpho-apy] Vault has zero supply position across all ${markets.length} market(s). ` +
-        `Check vault address or wait for funds to be deployed.`,
-    )
+    return { apy: 0, markets: details }
   }
 
   // Fill in allocationPct
@@ -285,15 +283,13 @@ export function mergeMarketDetails(current: MarketApyDetail[], simulated: Market
         allocationPct: c.allocationPct,
         vaultSupplyAssets: c.vaultSupplyAssets,
       },
-      simulated: s
-        ? {
-            supplyApy: s.supplyApy,
-            borrowApy: s.borrowApy,
-            utilization: s.utilization,
-            allocationPct: s.allocationPct,
-            vaultSupplyAssets: s.vaultSupplyAssets,
-          }
-        : { supplyApy: 0, borrowApy: 0, utilization: 0, allocationPct: 0, vaultSupplyAssets: 0n },
+      simulated: {
+        supplyApy: s.supplyApy,
+        borrowApy: s.borrowApy,
+        utilization: s.utilization,
+        allocationPct: s.allocationPct,
+        vaultSupplyAssets: s.vaultSupplyAssets,
+      },
     }
   })
 }

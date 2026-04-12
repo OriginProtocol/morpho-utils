@@ -1,6 +1,6 @@
 {
   "name": "origin-morpho-utils",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Morpho Blue / MetaMorpho vault APY computation and deposit/withdrawal impact simulation",
   "license": "BUSL-1.1",
   "author": "Origin Protocol",

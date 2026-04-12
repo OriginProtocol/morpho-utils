@@ -13,6 +13,61 @@ import type { MarketForApy, VaultApyResult, VaultFetchResult } from './types.js'
 
 const ADDRESS_ZERO = '0x0000000000000000000000000000000000000000'
 
+// --- Interest accrual helpers (matches Morpho Blue on-chain logic) ---
+
+const WAD_BI = 10n ** 18n
+const TARGET_UTIL_WAD = (9n * WAD_BI) / 10n // 0.9e18
+const STEEPNESS_WAD = 4n * WAD_BI // 4e18
+
+function computeBorrowRateWad(rateAtTarget: bigint, totalSupply: bigint, totalBorrow: bigint): bigint {
+  if (totalSupply === 0n || rateAtTarget <= 0n) return 0n
+  const util = (totalBorrow * WAD_BI) / totalSupply
+  const err =
+    util > TARGET_UTIL_WAD
+      ? ((util - TARGET_UTIL_WAD) * WAD_BI) / (WAD_BI - TARGET_UTIL_WAD)
+      : ((util - TARGET_UTIL_WAD) * WAD_BI) / TARGET_UTIL_WAD
+  const coeff = err < 0n ? WAD_BI - (WAD_BI * WAD_BI) / STEEPNESS_WAD : STEEPNESS_WAD - WAD_BI
+  return (((coeff * err) / WAD_BI + WAD_BI) * rateAtTarget) / WAD_BI
+}
+
+function wTaylorCompounded(rate: bigint, elapsed: bigint): bigint {
+  const firstTerm = rate * elapsed
+  const secondTerm = (firstTerm * firstTerm) / (2n * WAD_BI)
+  const thirdTerm = (secondTerm * firstTerm) / (3n * WAD_BI)
+  return firstTerm + secondTerm + thirdTerm
+}
+
+function accrueMarketInterest(
+  totalSupplyAssets: bigint,
+  totalSupplyShares: bigint,
+  totalBorrowAssets: bigint,
+  fee: bigint,
+  rateAtTarget: bigint,
+  lastUpdate: bigint,
+  now: bigint,
+): { totalSupplyAssets: bigint; totalBorrowAssets: bigint; totalSupplyShares: bigint } {
+  const elapsed = now - lastUpdate
+  if (elapsed <= 0n || totalBorrowAssets === 0n) {
+    return { totalSupplyAssets, totalBorrowAssets, totalSupplyShares }
+  }
+  const borrowRate = computeBorrowRateWad(rateAtTarget, totalSupplyAssets, totalBorrowAssets)
+  if (borrowRate <= 0n) {
+    return { totalSupplyAssets, totalBorrowAssets, totalSupplyShares }
+  }
+  const interest = (totalBorrowAssets * wTaylorCompounded(borrowRate, elapsed)) / WAD_BI
+  if (interest === 0n) {
+    return { totalSupplyAssets, totalBorrowAssets, totalSupplyShares }
+  }
+  const feeAmount = (interest * fee) / WAD_BI
+  const newBorrow = totalBorrowAssets + interest
+  const newSupply = totalSupplyAssets + interest
+  let newShares = totalSupplyShares
+  if (feeAmount > 0n && newSupply > feeAmount) {
+    newShares += (feeAmount * totalSupplyShares) / (newSupply - feeAmount)
+  }
+  return { totalSupplyAssets: newSupply, totalBorrowAssets: newBorrow, totalSupplyShares: newShares }
+}
+
 /**
  * Fetch all market data for a MetaMorpho vault using viem multicall.
  *
@@ -172,15 +227,27 @@ export async function fetchVaultMarketsViem(
     }
   }
 
-  // 6. Assemble
+  // 6. Assemble (with interest accrual to correct stale on-chain state)
+  const now = BigInt(Math.floor(Date.now() / 1000))
   const markets: MarketForApy[] = allIds.map((marketId, i) => {
-    const [totalSupplyAssets, totalSupplyShares, totalBorrowAssets, , , fee] = marketStates[i]
+    const [rawSupplyAssets, rawSupplyShares, rawBorrowAssets, , lastUpdate, fee] = marketStates[i]
     const [supplyShares] = positions[i]
     const [cap] = configs[i]
 
+    // Accrue interest since lastUpdate to get true current state
+    const accrued = accrueMarketInterest(
+      rawSupplyAssets,
+      rawSupplyShares,
+      rawBorrowAssets,
+      fee,
+      ratesAtTarget[i],
+      lastUpdate,
+      now,
+    )
+
     let vaultSupplyAssets = 0n
-    if (supplyShares > 0n && totalSupplyShares > 0n) {
-      vaultSupplyAssets = (supplyShares * totalSupplyAssets) / totalSupplyShares
+    if (supplyShares > 0n && accrued.totalSupplyShares > 0n) {
+      vaultSupplyAssets = (supplyShares * accrued.totalSupplyAssets) / accrued.totalSupplyShares
     }
 
     const [loanToken, collateralToken] = marketParams[i] as unknown as [string, string, string, string, bigint]
@@ -190,8 +257,8 @@ export async function fetchVaultMarketsViem(
       name: `${collateralSymbols[i]}/${loanSymbols[i]}`,
       loanToken,
       collateralToken,
-      totalSupplyAssets,
-      totalBorrowAssets,
+      totalSupplyAssets: accrued.totalSupplyAssets,
+      totalBorrowAssets: accrued.totalBorrowAssets,
       fee,
       vaultSupplyAssets,
       rateAtTarget: ratesAtTarget[i],

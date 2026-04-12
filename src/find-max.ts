@@ -69,21 +69,6 @@ function buildWithdrawalImpact(
   }
 }
 
-function makeFullDrainSnapshot(current: VaultApyDetailed): VaultApyDetailed {
-  return {
-    apy: 0,
-    markets: current.markets.map((m) => ({
-      marketId: m.marketId,
-      name: m.name,
-      supplyApy: 0,
-      borrowApy: 0,
-      utilization: 0,
-      allocationPct: 0,
-      vaultSupplyAssets: 0n,
-    })),
-  }
-}
-
 function zeroDepositImpact(markets: MarketForApy[], includeMarkets: boolean): DepositImpactResult {
   if (markets.length === 0) {
     return { currentApy: 0, newApy: 0, impact: 0, impactBps: 0, markets: [] }
@@ -92,11 +77,7 @@ function zeroDepositImpact(markets: MarketForApy[], includeMarkets: boolean): De
   return buildDepositImpact(current, current, includeMarkets)
 }
 
-function zeroWithdrawalImpact(
-  markets: MarketForApy[],
-  idleAssets: bigint,
-  includeMarkets: boolean,
-): WithdrawalImpactResult {
+function zeroWithdrawalImpact(markets: MarketForApy[], includeMarkets: boolean): WithdrawalImpactResult {
   if (markets.length === 0) {
     return { currentApy: 0, newApy: 0, impact: 0, impactBps: 0, isPartial: false, withdrawableAmount: '0', markets: [] }
   }
@@ -207,6 +188,13 @@ export async function findMaxDepositAmount(
     }
   }
 
+  if (constraint && lo + step <= effectiveMax && (await isAcceptable(lo + step))) {
+    console.warn(
+      '[morpho-apy] findMaxDepositAmount: constraint may not be monotonic — ' +
+        'amount above the binary search result still passes. Results may be inaccurate.',
+    )
+  }
+
   const sim = simulateDeposit(markets, lo)
   const simulated = weightedVaultApyDetailed(markets, sim)
   return {
@@ -248,7 +236,7 @@ export async function findMaxWithdrawalAmount(
       maxPossibleAmount: 0n,
       isMaxAmount: maxAmount === 0n,
       isCapped: false,
-      impact: zeroWithdrawalImpact(markets, idleAssets, incMkts),
+      impact: zeroWithdrawalImpact(markets, incMkts),
     }
   }
 
@@ -261,18 +249,16 @@ export async function findMaxWithdrawalAmount(
       maxPossibleAmount: maxPossible,
       isMaxAmount: false,
       isCapped: maxPossible === 0n,
-      impact: zeroWithdrawalImpact(markets, idleAssets, incMkts),
+      impact: zeroWithdrawalImpact(markets, incMkts),
     }
   }
 
   const current = weightedVaultApyDetailed(markets)
-  const totalVaultAssets = markets.reduce((acc, m) => acc + m.vaultSupplyAssets, 0n) + idleAssets
 
   // Helper: is this amount acceptable (APY impact + custom constraint)?
   async function isAcceptable(amount: bigint): Promise<boolean> {
     const { sim, withdrawable, remaining } = simulateWithdrawal(markets, amount, idleAssets)
-    const isFullDrain = withdrawable >= totalVaultAssets
-    const simulated = isFullDrain ? makeFullDrainSnapshot(current) : weightedVaultApyDetailed(markets, {}, sim)
+    const simulated = weightedVaultApyDetailed(markets, {}, sim)
     const impact = Math.abs(simulated.apy - current.apy)
     if (impact > maxImpact) return false
     if (!constraint) return true
@@ -305,8 +291,7 @@ export async function findMaxWithdrawalAmount(
   // Fast path: full effectiveMax within threshold
   if (await isAcceptable(effectiveMax)) {
     const { sim, withdrawable, remaining } = simulateWithdrawal(markets, effectiveMax, idleAssets)
-    const simulated =
-      withdrawable >= totalVaultAssets ? makeFullDrainSnapshot(current) : weightedVaultApyDetailed(markets, {}, sim)
+    const simulated = weightedVaultApyDetailed(markets, {}, sim)
     return {
       amount: effectiveMax,
       maxPossibleAmount: maxPossible,
@@ -323,7 +308,7 @@ export async function findMaxWithdrawalAmount(
       maxPossibleAmount: maxPossible,
       isMaxAmount: false,
       isCapped: false,
-      impact: zeroWithdrawalImpact(markets, idleAssets, incMkts),
+      impact: zeroWithdrawalImpact(markets, incMkts),
     }
   }
 
@@ -343,9 +328,15 @@ export async function findMaxWithdrawalAmount(
     }
   }
 
+  if (constraint && lo + step <= effectiveMax && (await isAcceptable(lo + step))) {
+    console.warn(
+      '[morpho-apy] findMaxWithdrawalAmount: constraint may not be monotonic — ' +
+        'amount above the binary search result still passes. Results may be inaccurate.',
+    )
+  }
+
   const { sim, withdrawable, remaining } = simulateWithdrawal(markets, lo, idleAssets)
-  const simulated =
-    withdrawable >= totalVaultAssets ? makeFullDrainSnapshot(current) : weightedVaultApyDetailed(markets, {}, sim)
+  const simulated = weightedVaultApyDetailed(markets, {}, sim)
   return {
     amount: lo,
     maxPossibleAmount: maxPossible,
